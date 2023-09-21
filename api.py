@@ -32,7 +32,7 @@ con = pymysql.connect(user='jun',
                       charset='utf8')
 mycursor = con.cursor()
 
-#clawling
+#crawling
 
 # 추출할 데이터의 날짜
 url = 'https://finance.naver.com/sise/sise_deposit.naver'
