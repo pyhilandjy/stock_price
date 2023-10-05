@@ -1,4 +1,4 @@
-import keyring
+# import keyring
 import requests as rq
 from io import BytesIO
 import zipfile
@@ -14,22 +14,22 @@ from bs4 import BeautifulSoup
 import re
 import time
 
-#save api_key
-keyring.set_password('dart_api_key', 'jun', '52a8f2deb975728e8626c2cd94d4af3b0b7fefcb')
-dart_api_key = keyring.get_password('dart_api_key', 'jun')
-keyring.set_password('price_api_key', 'jun', 'tmS99OrQLxahILsFmG5Q8BhcraMrFghrBWrO1MuJoNbCuoPYUsOrr0rWW3p%2FicigCVcXPFt0Jvfim9ZJYVyw4g%3D%3D')
-price_api_key = keyring.get_password('price_api_key', 'jun')
-keyring.set_password('div_api_key', 'jun', 'tmS99OrQLxahILsFmG5Q8BhcraMrFghrBWrO1MuJoNbCuoPYUsOrr0rWW3p%2FicigCVcXPFt0Jvfim9ZJYVyw4g%3D%3D')
-div_api_key = keyring.get_password('div_api_key', 'jun')
+# #save api_key
+# keyring.set_password('dart_api_key', 'jun', '52a8f2deb975728e8626c2cd94d4af3b0b7fefcb')
+# dart_api_key = keyring.get_password('dart_api_key', 'jun')
+# keyring.set_password('price_api_key', 'jun', 'tmS99OrQLxahILsFmG5Q8BhcraMrFghrBWrO1MuJoNbCuoPYUsOrr0rWW3p%2FicigCVcXPFt0Jvfim9ZJYVyw4g%3D%3D')
+# price_api_key = keyring.get_password('price_api_key', 'jun')
+# keyring.set_password('div_api_key', 'jun', 'tmS99OrQLxahILsFmG5Q8BhcraMrFghrBWrO1MuJoNbCuoPYUsOrr0rWW3p%2FicigCVcXPFt0Jvfim9ZJYVyw4g%3D%3D')
+# div_api_key = keyring.get_password('div_api_key', 'jun')
 
 
 def dailyCron():
-    ip = '43.201.116.164'
+    ip = '3.38.166.31'
     # connect sql
-    engine = create_engine(f'mysql+pymysql://jun:12345678@{ip}:3306/quant')
-    con = pymysql.connect(user='jun',
-                        passwd='12345678',
-                        host='{ip}',
+    engine = create_engine(f'mysql+pymysql://team8:1234qwer@{ip}:3306/quant')
+    con = pymysql.connect(user='team8',
+                        passwd='1234qwer',
+                        host= ip,
                         db='quant',
                         charset='utf8')
     mycursor = con.cursor()
@@ -100,6 +100,50 @@ def dailyCron():
     # 종목명 null 데이터 클랜징 (strip) & 기준일 추가.
     krx_sector['종목명'] = krx_sector['종목명'].str.strip()
     krx_sector['기준일'] = biz_day
+    
+    # 개별종목 지표 크롤링
+    gen_otp_url = 'http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd'
+    gen_otp_data = {
+        'locale': 'ko_KR',
+        'searchType': '1',
+        'mktId': 'ALL',
+        'trdDd': biz_day,
+        'csvxls_isNo': 'false',
+        'name': 'fileDown',
+        'url': 'dbms/MDC/STAT/standard/MDCSTAT03501'
+    }
+    headers = {'Referer': 'http://data.krx.co.kr/contents/MDC/MDI/mdiLoader'}
+    otp = rq.post(gen_otp_url, gen_otp_data, headers=headers).text
+
+    down_url = 'http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd'
+    krx_ind = rq.post(down_url, {'code': otp}, headers=headers)
+
+    krx_ind = pd.read_csv(BytesIO(krx_ind.content), encoding='EUC-KR')
+    krx_ind['종목명'] = krx_ind['종목명'].str.strip()
+    krx_ind['기준일'] = biz_day
+    
+    # 중복되지 않는 하나의 지표에만 존재하는 종목명 데이터 체크
+    set(krx_sector['종목명']).symmetric_difference(set(krx_ind['종목명'])) 
+
+    #merge
+    kor_ticker = pd.merge(krx_sector,
+                          krx_ind,
+                          on=krx_sector.columns.intersection(krx_ind.columns).tolist(),
+                          how='outer')
+
+    diff = list(set(krx_sector['종목명']).symmetric_difference(set(krx_ind['종목명'])))
+
+    kor_ticker['종목구분'] = np.where(kor_ticker['종목명'].str.contains('스팩|제[0-9]+호'), '스팩',
+                                np.where(kor_ticker['종목코드'].str[-1:] != '0', '우선주',
+                                        np.where(kor_ticker['종목명'].str.endswith('리츠'), '리츠',
+                                                    np.where(kor_ticker['종목명'].isin(diff), '기타',
+                                                            '보통주'))))
+
+
+    kor_ticker = kor_ticker.reset_index(drop=True)
+    kor_ticker.columns = kor_ticker.columns.str.replace(' ', '') # 컬럼명 공백 제거
+    kor_ticker = kor_ticker[['종목코드', '종목명', '시장구분', '종가', '시가총액', '기준일', 'EPS', '선행EPS', 'BPS', '주당배당금', '종목구분']] # 원하는 것만 선택
+    kor_ticker = kor_ticker.replace({np.nan: None}) # nan은 SQL에 저장할 수 없으므로 None으로 변경
 
 
     #sector
@@ -163,15 +207,15 @@ def dailyCron():
             
             # cleansing
             price = data_price.iloc[:, 0:6]
-            price.columns = ['날짜', '시가', '고가', '저가', '종가', '거래량']
+            price.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
             price = price.dropna()
-            price['날짜'] = price['날짜'].str.extract('(\d+)')
-            price['날짜'] = pd.to_datetime(price['날짜'])
-            price['종목코드'] = ticker
-            price['종목명'] = ticker_list[ticker_list['종목코드'] == ticker]['종목명'].values[0]
+            price['date'] = price['date'].str.extract('(\d+)')
+            price['date'] = pd.to_datetime(price['date'])
+            price['stock_code'] = ticker
+            price['stock_name'] = ticker_list[ticker_list['stock_code'] == ticker]['stock_name'].values[0]
 
             # to_sqp
-            price.to_sql(name="stock_price", con=engine, index=True, if_exists='append')
+            price.to_sql(name="stock_price_re", con=engine, index=True, if_exists='append')
             
         except:
             
@@ -183,80 +227,82 @@ def dailyCron():
         time.sleep(1)
 
 
-
-# 재무제표
-
-error_list_fs = []
+# dailyCron()
 
 
-# 재무제표 클랜징 함수
-def clean_fs(df, ticker, frequency):
-    df = df[~df.loc[:, ~df.columns.isin(['계정'])].isna().all(axis=1)]
-    df = df.drop_duplicates(['계정'], keep='first')
-    df = pd.melt(df, id_vars='계정', var_name='기준일', value_name='값')
-    df = df[~pd.isnull(df['값'])]
-    df['계정'] = df['계정'].replace({'계산에 참여한 계정 펼치기': ''}, regex=True)
-    df['기준일'] = pd.to_datetime(df['기준일'], format='%Y/%m') + pd.tseries.offsets.MonthEnd()
-    df['종목코드'] = ticker
-    df['공시구분'] = frequency
+# # 재무제표
+
+# error_list_fs = []
+
+
+# # 재무제표 클랜징 함수
+# def clean_fs(df, ticker, frequency):
+#     df = df[~df.loc[:, ~df.columns.isin(['계정'])].isna().all(axis=1)]
+#     df = df.drop_duplicates(['계정'], keep='first')
+#     df = pd.melt(df, id_vars='계정', var_name='기준일', value_name='값')
+#     df = df[~pd.isnull(df['값'])]
+#     df['계정'] = df['계정'].replace({'계산에 참여한 계정 펼치기': ''}, regex=True)
+#     df['기준일'] = pd.to_datetime(df['기준일'], format='%Y/%m') + pd.tseries.offsets.MonthEnd()
+#     df['종목코드'] = ticker
+#     df['공시구분'] = frequency
     
-    return df
+#     return df
 
 
-# for loop
-for i in tqdm(range(0, len(ticker_list))):
+# # for loop
+# for i in tqdm(range(0, len(ticker_list))):
     
-    # 티커 선택
-    ticker = ticker_list['종목코드'][i]
+#     # 티커 선택
+#     ticker = ticker_list['종목코드'][i]
     
-    # 오류 발생 시 이를 무시하고 다음 루프로 진행
-    try:
+#     # 오류 발생 시 이를 무시하고 다음 루프로 진행
+#     try:
         
-        # url 생성
-        url = f'https://comp.fnguide.com/SVO2/ASP/SVD_Finance.asp?pGB=1&gicode=A{ticker}'
+#         # url 생성
+#         url = f'https://comp.fnguide.com/SVO2/ASP/SVD_Finance.asp?pGB=1&gicode=A{ticker}'
         
-        # 데이터 받아오기
-        data = pd.read_html(url, displayed_only=False)
+#         # 데이터 받아오기
+#         data = pd.read_html(url, displayed_only=False)
         
-        # 연간 데이터
-        data_fs_y = pd.concat([
-            data[0].iloc[:, ~data[0].columns.str.contains('전년동기')], data[2], data[4]
-        ])
-        data_fs_y = data_fs_y.rename(columns={data_fs_y.columns[0]: '계정'})
+#         # 연간 데이터
+#         data_fs_y = pd.concat([
+#             data[0].iloc[:, ~data[0].columns.str.contains('전년동기')], data[2], data[4]
+#         ])
+#         data_fs_y = data_fs_y.rename(columns={data_fs_y.columns[0]: '계정'})
         
-        # 결산년 찾기
-        page_data = rq.get(url)
-        page_data_html = BeautifulSoup(page_data.content, 'html.parser')
+#         # 결산년 찾기
+#         page_data = rq.get(url)
+#         page_data_html = BeautifulSoup(page_data.content, 'html.parser')
         
-        fiscal_data = page_data_html.select('div.corp_group1 > h2')
-        fiscal_data_text = fiscal_data[1].text
-        fiscal_data_text = re.findall('[0-9]+', fiscal_data_text)
+#         fiscal_data = page_data_html.select('div.corp_group1 > h2')
+#         fiscal_data_text = fiscal_data[1].text
+#         fiscal_data_text = re.findall('[0-9]+', fiscal_data_text)
         
-        # 결산년에 해당하는 계정만 남기기
-        data_fs_y = data_fs_y.loc[:, (data_fs_y.columns == '계정') | (data_fs_y.columns.str[-2:].isin(fiscal_data_text))]
+#         # 결산년에 해당하는 계정만 남기기
+#         data_fs_y = data_fs_y.loc[:, (data_fs_y.columns == '계정') | (data_fs_y.columns.str[-2:].isin(fiscal_data_text))]
         
-        # 클랜징
-        data_fs_y_clean = clean_fs(data_fs_y, ticker, 'y')
+#         # 클랜징
+#         data_fs_y_clean = clean_fs(data_fs_y, ticker, 'y')
         
-        # 분기 데이터
-        data_fs_q = pd.concat([
-            data[1].iloc[:, ~data[1].columns.str.contains('전년동기')], data[3], data[5]
-        ])
-        data_fs_q = data_fs_q.rename(columns={data_fs_q.columns[0]: '계정'})
+#         # 분기 데이터
+#         data_fs_q = pd.concat([
+#             data[1].iloc[:, ~data[1].columns.str.contains('전년동기')], data[3], data[5]
+#         ])
+#         data_fs_q = data_fs_q.rename(columns={data_fs_q.columns[0]: '계정'})
         
-        data_fs_q_clean = clean_fs(data_fs_q, ticker, 'q')
+#         data_fs_q_clean = clean_fs(data_fs_q, ticker, 'q')
         
-        # 두개 합치기
-        data_fs_bind = pd.concat([data_fs_y_clean, data_fs_q_clean])
+#         # 두개 합치기
+#         data_fs_bind = pd.concat([data_fs_y_clean, data_fs_q_clean])
         
-        # 재무제표 데이터를 DB에 저장
-        data_fs_bind.to_sql(name='fs_data', con=engine, index=True, if_exists='append')
+#         # 재무제표 데이터를 DB에 저장
+#         data_fs_bind.to_sql(name='fs_data', con=engine, index=True, if_exists='append')
         
-    except:
+#     except:
         
-        # 오류 발생시 해당 종목명을 저장하고 다음 루프로 이동
-        print(ticker)
-        error_list_fs.append(ticker)
+#         # 오류 발생시 해당 종목명을 저장하고 다음 루프로 이동
+#         print(ticker)
+#         error_list_fs.append(ticker)
         
-    # 타임슬립 적용
-    time.sleep(1)
+#     # 타임슬립 적용
+#     time.sleep(1)
