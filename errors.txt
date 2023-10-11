@@ -1,0 +1,2 @@
+Error occurred for stock_code: 384470, Error: Expected input data to be non-empty.
+Error occurred for stock_code: 465770, Error: Expected input data to be non-empty.

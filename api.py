@@ -26,9 +26,9 @@ import time
 def dailyCron():
     ip = '3.38.166.31'
     # connect sql
-    engine = create_engine(f'mysql+pymysql://team8:1234qwer@{ip}:3306/quant')
-    con = pymysql.connect(user='team8',
-                        passwd='1234qwer',
+    engine = create_engine(f'mysql+pymysql://jun:12345678@{ip}:3306/quant')
+    con = pymysql.connect(user='jun',
+                        passwd='12345678',
                         host= ip,
                         db='quant',
                         charset='utf8')
@@ -100,50 +100,6 @@ def dailyCron():
     # 종목명 null 데이터 클랜징 (strip) & 기준일 추가.
     krx_sector['종목명'] = krx_sector['종목명'].str.strip()
     krx_sector['기준일'] = biz_day
-    
-    # 개별종목 지표 크롤링
-    gen_otp_url = 'http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd'
-    gen_otp_data = {
-        'locale': 'ko_KR',
-        'searchType': '1',
-        'mktId': 'ALL',
-        'trdDd': biz_day,
-        'csvxls_isNo': 'false',
-        'name': 'fileDown',
-        'url': 'dbms/MDC/STAT/standard/MDCSTAT03501'
-    }
-    headers = {'Referer': 'http://data.krx.co.kr/contents/MDC/MDI/mdiLoader'}
-    otp = rq.post(gen_otp_url, gen_otp_data, headers=headers).text
-
-    down_url = 'http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd'
-    krx_ind = rq.post(down_url, {'code': otp}, headers=headers)
-
-    krx_ind = pd.read_csv(BytesIO(krx_ind.content), encoding='EUC-KR')
-    krx_ind['종목명'] = krx_ind['종목명'].str.strip()
-    krx_ind['기준일'] = biz_day
-    
-    # 중복되지 않는 하나의 지표에만 존재하는 종목명 데이터 체크
-    set(krx_sector['종목명']).symmetric_difference(set(krx_ind['종목명'])) 
-
-    #merge
-    kor_ticker = pd.merge(krx_sector,
-                          krx_ind,
-                          on=krx_sector.columns.intersection(krx_ind.columns).tolist(),
-                          how='outer')
-
-    diff = list(set(krx_sector['종목명']).symmetric_difference(set(krx_ind['종목명'])))
-
-    kor_ticker['종목구분'] = np.where(kor_ticker['종목명'].str.contains('스팩|제[0-9]+호'), '스팩',
-                                np.where(kor_ticker['종목코드'].str[-1:] != '0', '우선주',
-                                        np.where(kor_ticker['종목명'].str.endswith('리츠'), '리츠',
-                                                    np.where(kor_ticker['종목명'].isin(diff), '기타',
-                                                            '보통주'))))
-
-
-    kor_ticker = kor_ticker.reset_index(drop=True)
-    kor_ticker.columns = kor_ticker.columns.str.replace(' ', '') # 컬럼명 공백 제거
-    kor_ticker = kor_ticker[['종목코드', '종목명', '시장구분', '종가', '시가총액', '기준일', 'EPS', '선행EPS', 'BPS', '주당배당금', '종목구분']] # 원하는 것만 선택
-    kor_ticker = kor_ticker.replace({np.nan: None}) # nan은 SQL에 저장할 수 없으므로 None으로 변경
 
 
     #sector
@@ -215,7 +171,7 @@ def dailyCron():
             price['stock_name'] = ticker_list[ticker_list['stock_code'] == ticker]['stock_name'].values[0]
 
             # to_sqp
-            price.to_sql(name="stock_price_re", con=engine, index=True, if_exists='append')
+            price.to_sql(name="stock_price", con=engine, index=True, if_exists='append')
             
         except:
             
